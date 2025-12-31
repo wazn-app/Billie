@@ -9,15 +9,17 @@ python-multipart==0.0.6
 # Database
 sqlalchemy==2.0.23
 aiosqlite==0.19.0
+asyncpg==0.29.0
 
 # Data validation
 pydantic==2.5.0
 
 # OCR
-pytesseract==0.3.10
+paddlepaddle==2.6.2
+paddleocr==2.7.3
 pdf2image==1.16.3
 pillow==10.1.0
-opencv-python==4.8.1.78
+opencv-python==4.6.0.66
 numpy==1.26.2
 
 # CSV export

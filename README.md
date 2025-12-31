@@ -69,6 +69,54 @@ Billie/
 - Node.js 18+
 - npm or yarn
 
+### System Dependencies
+
+This project requires the following system-level binaries for OCR and PDF processing:
+
+#### macOS (Homebrew)
+```bash
+# Install Poppler (for PDF to image conversion)
+brew install poppler
+
+# Install Tesseract OCR engine
+brew install tesseract
+
+# Optional: Install additional language packs
+brew install tesseract-lang
+```
+
+#### Ubuntu/Debian (apt-get)
+```bash
+# Update package list
+sudo apt-get update
+
+# Install Poppler
+sudo apt-get install poppler-utils
+
+# Install Tesseract OCR engine
+sudo apt-get install tesseract-ocr
+
+# Optional: Install additional language packs
+sudo apt-get install tesseract-ocr-eng
+```
+
+#### Windows
+```bash
+# Install Poppler
+# Download from: https://github.com/oschwartz10612/poppler-windows/releases/
+# Extract and add the bin directory to your PATH
+
+# Install Tesseract OCR
+# Download from: https://github.com/UB-Mannheim/tesseract/wiki
+# Run the installer and add the installation directory to your PATH
+
+# Optional: Download additional language data files from:
+# https://github.com/tesseract-ocr/tessdata
+# Place them in the tessdata directory
+```
+
+**Note:** After installing these dependencies, you may need to restart your terminal or IDE for the changes to take effect.
+
 ### Backend Setup
 
 1. Navigate to the backend directory:

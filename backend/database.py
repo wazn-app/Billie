@@ -2,9 +2,10 @@
 Billie MVP - Invoice Processing System
 Database Models and Session Management
 
-SQLAlchemy ORM with SQLite backend for local storage
+SQLAlchemy ORM with PostgreSQL backend for production-grade performance
 """
 
+import os
 from sqlalchemy import create_engine, Column, Integer, String, Date, Numeric, DateTime, ForeignKey
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
@@ -15,13 +16,19 @@ from decimal import Decimal
 # Database Configuration
 # =============================================================================
 
-# SQLite database file
-DATABASE_URL = "sqlite+aiosqlite:///./billie.db"
+# PostgreSQL connection parameters from environment variables
+POSTGRES_USER = os.getenv("POSTGRES_USER", "billie")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "billie_password")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "billie_db")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "db")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+
+# PostgreSQL database URL with asyncpg driver
+DATABASE_URL = f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
     echo=False  # Set to True for SQL query logging
 )
 

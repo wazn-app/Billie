@@ -76,8 +76,8 @@ export default function Upload() {
       // Show success notification
       success(`Invoice "${file.name}" uploaded successfully! Data extracted.`);
       
-      // Navigate to review page with the file ID
-      navigate(`/review/${result.file_id}`, { state: { extractionResult: result } });
+      // Navigate to review page with the invoice ID
+      navigate(`/review/${result.id}`, { state: { invoiceData: result } });
     } catch (err) {
       setError(err.detail || 'Failed to process PDF file');
       showError(err.detail || 'Failed to process PDF file');

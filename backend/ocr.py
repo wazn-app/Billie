@@ -1,12 +1,12 @@
 """
 Billie MVP - Invoice Processing System
-Tesseract OCR Extraction Wrapper
+PaddleOCR Extraction Wrapper
 
 InvoiceExtractor class with confidence scoring for field extraction
-Uses pytesseract and pdf2image for PDF processing
+Uses PaddleOCR and pdf2image for PDF processing
 """
 
-import pytesseract
+from paddleocr import PaddleOCR
 from pdf2image import convert_from_path
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -15,6 +15,8 @@ from datetime import datetime
 import logging
 import numpy as np
 import cv2
+import asyncio
+import functools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class InvoiceExtractor:
     """
-    Invoice extraction using Tesseract OCR with confidence scoring.
+    Invoice extraction using PaddleOCR with confidence scoring.
 
     Extracts key fields from PDF invoices:
     - Vendor name
@@ -35,22 +37,22 @@ class InvoiceExtractor:
     Fields with confidence < 0.8 should be flagged for manual review.
     """
 
-    def __init__(self, lang: str = 'eng'):
+    def __init__(self, lang: str = 'en'):
         """
-        Initialize Tesseract OCR engine.
+        Initialize PaddleOCR engine.
 
         Args:
-            lang: Language for OCR (default: 'eng' for English)
+            lang: Language for OCR (default: 'en' for English)
         """
-        logger.info(f"Initializing Tesseract OCR (lang={lang})")
+        logger.info(f"Initializing PaddleOCR (lang={lang})")
         self.lang = lang
-        # Verify tesseract is available
+        # Initialize PaddleOCR with English language, angle classification, and suppressed logs
         try:
-            pytesseract.get_tesseract_version()
-            logger.info(f"Tesseract version: {pytesseract.get_tesseract_version()}")
+            self.ocr = PaddleOCR(lang=lang, use_angle_cls=True, show_log=False)
+            logger.info("PaddleOCR initialized successfully")
         except Exception as e:
-            logger.error(f"Tesseract not found: {e}")
-            raise RuntimeError("Tesseract OCR is not installed or not in PATH")
+            logger.error(f"PaddleOCR initialization failed: {e}")
+            raise RuntimeError("PaddleOCR initialization failed")
 
     def _preprocess_image(self, image) -> np.ndarray:
         """
@@ -137,9 +139,13 @@ class InvoiceExtractor:
 
         logger.info(f"Extracting data from: {pdf_path}")
 
-        # Convert PDF to images
+        # Run blocking PDF to image conversion in a separate thread
+        loop = asyncio.get_running_loop()
         try:
-            images = convert_from_path(pdf_path, dpi=300)
+            images = await loop.run_in_executor(
+                None,
+                functools.partial(convert_from_path, pdf_path, dpi=300)
+            )
             logger.info(f"Converted PDF to {len(images)} image(s)")
         except Exception as e:
             logger.error(f"PDF to image conversion failed: {e}")
@@ -156,28 +162,32 @@ class InvoiceExtractor:
                 # Preprocess image for better OCR
                 preprocessed = self._preprocess_image(image)
                 
-                # Get text with line-level data
-                data = pytesseract.image_to_data(
-                    preprocessed,
-                    lang=self.lang,
-                    output_type=pytesseract.Output.DICT
+                # Run blocking OCR in a separate thread
+                result = await loop.run_in_executor(
+                    None,
+                    functools.partial(self.ocr.ocr, preprocessed, cls=True)
                 )
                 
-                # Extract lines with their positions
-                for i in range(len(data['text'])):
-                    text = data['text'][i].strip()
-                    if text:  # Skip empty lines
-                        # Calculate a basic confidence based on text quality
-                        # Tesseract provides confidence at character level
-                        conf = data['conf'][i] / 100.0 if 'conf' in data else 0.8
-                        conf = max(0.0, min(1.0, conf))
-                        
-                        all_text_lines.append({
-                            'text': text,
-                            'confidence': conf,
-                            'page': page_num,
-                            'top': data['top'][i] if 'top' in data else 0
-                        })
+                # PaddleOCR returns results in format: [[[[x1,y1], [x2,y2], [x3,y3], [x4,y4]], (text, confidence)], ...]
+                if result and result[0]:
+                    for line_data in result[0]:
+                        if line_data:
+                            # line_data is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]], (text, confidence)
+                            bbox, (text, confidence) = line_data
+                            text = text.strip()
+                            if text:  # Skip empty lines
+                                # PaddleOCR confidence is already in 0-1 range
+                                conf = max(0.0, min(1.0, confidence))
+                                
+                                # Calculate approximate vertical position from bounding box
+                                top = bbox[0][1] if bbox else 0
+                                
+                                all_text_lines.append({
+                                    'text': text,
+                                    'confidence': conf,
+                                    'page': page_num,
+                                    'top': top
+                                })
             except Exception as e:
                 logger.warning(f"Failed to extract text from page {page_num}: {e}")
                 continue

@@ -124,7 +124,7 @@ else:
 # File Upload & Processing Endpoint (Task 5)
 # =============================================================================
 
-@app.post("/upload", response_model=ExtractionResult)
+@app.post("/upload", response_model=InvoiceResponse)
 async def upload_invoice(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
@@ -133,7 +133,7 @@ async def upload_invoice(
     Upload PDF invoice and extract data using OCR.
 
     Validates file type and size, saves with UUID filename, triggers OCR extraction.
-    Returns ExtractionResult with confidence scores.
+    Automatically saves extracted data as a draft invoice and returns the Invoice object.
     """
     # Validate file type
     if not file.filename or not file.filename.lower().endswith('.pdf'):
@@ -169,34 +169,83 @@ async def upload_invoice(
         )
 
     # Perform OCR extraction
+    extraction_result = None
     if not OCR_AVAILABLE:
-        # OCR not available - return empty extraction
-        return {
-            "vendor": None,
+        # OCR not available - use empty extraction
+        extraction_result = {
+            "vendor": "Unknown Vendor",
             "vendor_confidence": 0.0,
             "date": None,
             "date_confidence": 0.0,
-            "total": None,
+            "total": 0.01,
             "total_confidence": 0.0,
             "invoice_number": None,
-            "invoice_number_confidence": 0.0,
-            "file_id": file_id,
-            "filename": file.filename
+            "invoice_number_confidence": 0.0
         }
-    
-    try:
-        extraction_result = await ocr_extractor.extract(file_path)
-        extraction_result["file_id"] = file_id
-        extraction_result["filename"] = file.filename
-        return extraction_result
-    except Exception as e:
-        # Clean up file on OCR failure
-        if file_path.exists():
-            file_path.unlink()
-        raise HTTPException(
-            status_code=400,
-            detail="Unable to process PDF file"
-        )
+    else:
+        try:
+            extraction_result = await ocr_extractor.extract(file_path)
+        except Exception as e:
+            # Clean up file on OCR failure
+            if file_path.exists():
+                file_path.unlink()
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to process PDF file"
+            )
+
+    # Save extracted data as a draft invoice
+    from sqlalchemy import select
+    from database import Invoice, Vendor
+    from datetime import date
+
+    # Find or create vendor
+    vendor_name = extraction_result.get("vendor") or "Unknown Vendor"
+    result = await db.execute(
+        select(Vendor).where(Vendor.name == vendor_name)
+    )
+    vendor = result.scalar_one_or_none()
+
+    if not vendor:
+        vendor = Vendor(name=vendor_name)
+        db.add(vendor)
+        await db.flush()  # Get the vendor ID
+
+    # Parse date if present
+    invoice_date = None
+    date_str = extraction_result.get("date")
+    if date_str:
+        try:
+            invoice_date = date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            pass
+
+    # Create invoice with draft status
+    db_invoice = Invoice(
+        filename=file.filename or "unknown.pdf",
+        file_id=file_id,
+        vendor_id=vendor.id,
+        date=invoice_date,
+        total=extraction_result.get("total", 0.01),
+        invoice_number=extraction_result.get("invoice_number"),
+        status="draft"
+    )
+    db.add(db_invoice)
+    await db.commit()
+    await db.refresh(db_invoice)
+
+    return InvoiceResponse(
+        id=db_invoice.id,
+        filename=db_invoice.filename,
+        file_id=db_invoice.file_id,
+        vendor=vendor.name,
+        vendor_id=vendor.id,
+        date=db_invoice.date.isoformat() if db_invoice.date else None,
+        total=float(db_invoice.total),
+        invoice_number=db_invoice.invoice_number,
+        status=db_invoice.status,
+        created_at=db_invoice.created_at.isoformat()
+    )
 
 # =============================================================================
 # Invoice CRUD Endpoints (Task 6)
@@ -349,6 +398,8 @@ async def update_invoice(
     db: AsyncSession = Depends(get_db)
 ):
     """Update invoice (e.g., after user review/edit)"""
+    import logging
+    logging.info(f"PUT /invoices/{invoice_id} - Received payload: {invoice.model_dump()}")
     from sqlalchemy import select
     from database import Invoice, Vendor
 

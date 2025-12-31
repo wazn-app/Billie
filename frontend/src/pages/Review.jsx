@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { createInvoice, getVendors, createVendor } from '../api';
+import { createInvoice, getVendors, createVendor, getInvoice, updateInvoice } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import VendorSelect from '../components/VendorSelect';
 
-// Configure PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+// Configure PDF.js worker with local import
+pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.js', import.meta.url).toString();
 
 export default function Review() {
   const { fileId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const extractionResult = location.state?.extractionResult;
+  const invoiceData = location.state?.invoiceData;
   const { success, error: showError } = useToast();
 
   const [numPages, setNumPages] = useState(null);
@@ -25,34 +25,82 @@ export default function Review() {
   const [isCreatingVendor, setIsCreatingVendor] = useState(false);
   const [error, setError] = useState(null);
   const [showExtractionSuccess, setShowExtractionSuccess] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
-    file_id: fileId,
-    filename: extractionResult?.filename || '',
-    vendor: extractionResult?.vendor || '',
-    date: extractionResult?.date || '',
-    total: extractionResult?.total || '',
-    invoice_number: extractionResult?.invoice_number || '',
+    file_id: '',
+    filename: '',
+    vendor: '',
+    date: '',
+    total: '',
+    invoice_number: '',
     status: 'draft',
   });
 
   // Confidence scores
-  const confidence = {
-    vendor: extractionResult?.vendor_confidence || 0,
-    date: extractionResult?.date_confidence || 0,
-    total: extractionResult?.total_confidence || 0,
-    invoice_number: extractionResult?.invoice_number_confidence || 0,
-  };
+  const [confidence, setConfidence] = useState({
+    vendor: 0,
+    date: 0,
+    total: 0,
+    invoice_number: 0,
+  });
 
   useEffect(() => {
     loadVendors();
+    
+    // Load invoice data from state or fetch from API
+    if (invoiceData) {
+      // Data passed from upload page
+      populateForm(invoiceData);
+    } else {
+      // Fetch from API (e.g., on page refresh)
+      fetchInvoiceData();
+    }
+    
     // Auto-hide extraction success banner after 5 seconds
     const timer = setTimeout(() => {
       setShowExtractionSuccess(false);
     }, 5000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [fileId]);
+
+  const fetchInvoiceData = async () => {
+    if (!fileId) return;
+    
+    setIsLoading(true);
+    try {
+      const data = await getInvoice(fileId);
+      populateForm(data);
+    } catch (err) {
+      console.error('Failed to fetch invoice:', err);
+      setError('Failed to load invoice data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const populateForm = (data) => {
+    setFormData({
+      file_id: data.file_id,
+      filename: data.filename || '',
+      vendor: data.vendor || '',
+      date: data.date || '',
+      total: data.total !== undefined && data.total !== null ? data.total : '',
+      invoice_number: data.invoice_number || '',
+      status: data.status || 'draft',
+    });
+    
+    // If confidence scores are available (from upload state), use them
+    if (data.vendor_confidence !== undefined) {
+      setConfidence({
+        vendor: data.vendor_confidence || 0,
+        date: data.date_confidence || 0,
+        total: data.total_confidence || 0,
+        invoice_number: data.invoice_number_confidence || 0,
+      });
+    }
+  };
 
   const loadVendors = async () => {
     try {
@@ -149,17 +197,22 @@ export default function Review() {
     }
 
     try {
-      const invoiceData = {
+      const invoicePayload = {
         file_id: formData.file_id,
         filename: formData.filename || null,
         vendor: formData.vendor,
-        date: formData.date || null,
+        date: formData.date ? formData.date : null,
         total: parseFloat(formData.total),
         invoice_number: formData.invoice_number || null,
         status,
       };
 
-      await createInvoice(invoiceData);
+      // If we have an invoice ID (from fileId parameter), update instead of create
+      if (fileId && !isNaN(parseInt(fileId))) {
+        await updateInvoice(fileId, invoicePayload);
+      } else {
+        await createInvoice(invoicePayload);
+      }
       
       if (status === 'approved') {
         success('Invoice saved and approved successfully!');
@@ -213,7 +266,7 @@ export default function Review() {
   return (
     <div className="space-y-6">
       {/* OCR Extraction Success Banner */}
-      {showExtractionSuccess && extractionResult && (
+      {showExtractionSuccess && invoiceData && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 animate-slide-in">
           <div className="flex items-center">
             <div className="flex-shrink-0">
@@ -270,7 +323,7 @@ export default function Review() {
               </div>
             ) : (
               <Document
-                file={`http://localhost:8000/uploads/${fileId}.pdf`}
+                file={`/uploads/${formData.file_id}.pdf`}
                 onLoadSuccess={handlePdfLoadSuccess}
                 onLoadError={handlePdfLoadError}
                 className="max-w-full"

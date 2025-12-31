@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: billie-db
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-billie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-billie_password}
+      POSTGRES_DB: ${POSTGRES_DB:-billie_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-billie} -d ${POSTGRES_DB:-billie_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: always
+    networks:
+      - billie-network
+
+  backend:
+    build: ./backend
+    container_name: billie-backend
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-billie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-billie_password}
+      POSTGRES_DB: ${POSTGRES_DB:-billie_db}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    networks:
+      - billie-network
+
+  frontend:
+    build: ./frontend
+    container_name: billie-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+    networks:
+      - billie-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  billie-network:
+    driver: bridge
